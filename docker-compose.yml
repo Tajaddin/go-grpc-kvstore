@@ -1,0 +1,8 @@
+services:
+  kvstore:
+    build: .
+    image: go-grpc-kvstore:latest
+    ports:
+      - "50051:50051"  # gRPC
+      - "8080:8080"    # REST gateway
+    command: ["-grpc", ":50051", "-http", ":8080"]
