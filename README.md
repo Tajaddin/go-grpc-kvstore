@@ -47,14 +47,15 @@ Role categories unlocked: **Backend-Go**, Platform Engineering, Systems, Forward
 
 Go + gRPC + load-tested throughput is the exact stack platform and infra teams screen for. This repo backs the "Go / gRPC" resume line with a service that actually serves 40K+ ops/sec and proves it with a reproducible harness.
 
-## Run it
+## How to run
 
-### gRPC + REST server
+Prerequisites: Go 1.23+ (Docker optional for the container build).
 
 ```bash
+go test ./...                       # 16 unit tests (race detector)
 go run ./cmd/server                 # gRPC on :50051, REST on :8080
-# or
-docker compose up --build
+go run ./load -addr localhost:50051 -workers 64 -requests 200000   # reproduces the hero
+docker compose up --build           # alt: distroless container
 ```
 
 ### REST gateway
