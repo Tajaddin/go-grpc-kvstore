@@ -5,6 +5,7 @@ package httpgateway
 import (
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"strconv"
 	"time"
@@ -42,7 +43,9 @@ func (g *Gateway) Handler() http.Handler {
 func writeJSON(w http.ResponseWriter, code int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(code)
-	_ = json.NewEncoder(w).Encode(body)
+	if err := json.NewEncoder(w).Encode(body); err != nil {
+		log.Printf("writeJSON encode: %v", err)
+	}
 }
 
 func (g *Gateway) get(w http.ResponseWriter, r *http.Request) {

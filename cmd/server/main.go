@@ -64,7 +64,9 @@ func main() {
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	_ = httpSrv.Shutdown(ctx)
+	if err := httpSrv.Shutdown(ctx); err != nil {
+		log.Printf("http shutdown: %v", err)
+	}
 	grpcSrv.GracefulStop()
 }
 
