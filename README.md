@@ -1,6 +1,6 @@
 # go-grpc-kvstore
 
-> In-memory key-value store served over **gRPC + REST at once**. **43,611 ops/sec at p99 3.7ms** on the Get path over real gRPC (HTTP/2 + protobuf, 64 workers, 200k/200k OK). TTL expiry, a streaming Watch, sharded concurrency, distroless image. 16 tests with the race detector, no external infra.
+> In-memory key-value store served over **gRPC + REST at once**. **~51,800 ops/sec at p99 2.84ms** on the Get path over real gRPC (HTTP/2 + protobuf, 64 workers, 200k/200k OK). TTL expiry, a streaming Watch, sharded concurrency, distroless image. 16 tests with the race detector, no external infra.
 
 [![ci](https://github.com/Tajaddin/go-grpc-kvstore/actions/workflows/ci.yml/badge.svg)](https://github.com/Tajaddin/go-grpc-kvstore/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -15,16 +15,15 @@ go run ./cmd/server &
 go run ./load -addr localhost:50051 -workers 64 -requests 200000
 ```
 
+Last measured 3-run baseline (full output + hardware in [`bench/results.txt`](bench/results.txt)):
+
 | Metric | Value |
 |---|---:|
-| **Throughput (gRPC Get)** | **43,611 ops/sec** |
-| Latency p50 | 1.19 ms |
-| Latency p95 | 2.90 ms |
-| Latency p99 | **3.71 ms** |
-| Latency max | 10.08 ms |
-| Success rate | 200,000 / 200,000 (100%) |
+| **Throughput (gRPC Get)** | **~51,800 ops/sec** (3-run median 51,753; max 51,993) |
+| Latency p99 | **~2.84 ms** |
+| Success rate | 200,000 / 200,000 (100%) per run |
 
-Single server instance, single client process, in-memory store, real gRPC over the loopback (HTTP/2 framing + protobuf marshal on every call). That is 4x the "10K QPS" bar most platform-engineering JDs ask for, with a sub-4ms p99.
+Single server instance, single client process, in-memory store, real gRPC over the loopback (HTTP/2 framing + protobuf marshal on every call). That is ~5x the "10K QPS" bar most platform-engineering JDs ask for, with a sub-3ms p99.
 
 ## What it is
 

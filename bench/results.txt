@@ -1,0 +1,46 @@
+# go-grpc-kvstore hero-number benchmark
+timestamp:  2026-05-23T01:30-04:00
+hardware:   Intel i7-10875H 8c/16t @ 2.3GHz; 32 GB RAM; Windows 11
+runtime:    Go 1.26.3 (gRPC HTTP/2 + protobuf, in-memory store)
+server:     go run ./cmd/server -grpc :50051
+load:       ./load -addr localhost:50051 -workers 64 -requests 200000
+runs:       3 consecutive (Get hot path)
+
+## Summary
+median throughput: 51,753 ops/sec  (run 1)
+median p99:        2.84 ms          (run 1)
+max throughput:    51,993 ops/sec  (run 3)
+Previously claimed: 43,611 ops/sec p99 3.7ms — README bumped UP to median (~52K) since this hardware over-performs the original baseline.
+
+## Raw runs
+
+=== run 1 ===
+endpoint:      Get over gRPC (HTTP/2, protobuf)
+workers:       64
+requests_ok:   200000 / 200000
+wall_seconds:  3.864
+throughput:    51753 ops/sec
+latency_p50:   1.1142ms
+latency_p95:   2.3053ms
+latency_p99:   2.8438ms
+latency_max:   4.8591ms
+=== run 2 ===
+endpoint:      Get over gRPC (HTTP/2, protobuf)
+workers:       64
+requests_ok:   200000 / 200000
+wall_seconds:  3.897
+throughput:    51324 ops/sec
+latency_p50:   1.114ms
+latency_p95:   2.3169ms
+latency_p99:   2.8711ms
+latency_max:   5.3191ms
+=== run 3 ===
+endpoint:      Get over gRPC (HTTP/2, protobuf)
+workers:       64
+requests_ok:   200000 / 200000
+wall_seconds:  3.847
+throughput:    51993 ops/sec
+latency_p50:   1.1118ms
+latency_p95:   2.2828ms
+latency_p99:   2.8416ms
+latency_max:   24.1509ms
