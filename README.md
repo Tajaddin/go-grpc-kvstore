@@ -4,7 +4,7 @@
 
 [![ci](https://github.com/Tajaddin/go-grpc-kvstore/actions/workflows/ci.yml/badge.svg)](https://github.com/Tajaddin/go-grpc-kvstore/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Go](https://img.shields.io/badge/go-1.24-00ADD8)](go.mod)
+[![Go](https://img.shields.io/badge/go-1.26-00ADD8)](go.mod)
 
 ## Hero metrics
 
@@ -49,7 +49,7 @@ Go + gRPC + load-tested throughput is the exact stack platform and infra teams s
 
 ## How to run
 
-Prerequisites: Go 1.23+ (Docker optional for the container build).
+Prerequisites: Go 1.26+ (Docker optional for the container build).
 
 ```bash
 go test ./...                       # 16 unit tests (race detector)
@@ -120,7 +120,7 @@ make proto    # needs protoc + protoc-gen-go + protoc-gen-go-grpc
 
 ## Stack
 
-Go 1.24, google.golang.org/grpc, protobuf, net/http (REST), distroless Docker, GitHub Actions (vet + race tests + coverage gate + image build).
+Go 1.26, google.golang.org/grpc, protobuf, net/http (REST), distroless Docker, GitHub Actions (vet + race tests + coverage gate + image build).
 
 ## License
 
