@@ -92,22 +92,21 @@ func (s *Store) Set(key string, value []byte, ttl time.Duration) (replaced bool)
 	}
 
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, existed := s.data[key]
 	s.data[key] = entry{value: stored, expiresAt: expiresAt}
-	s.mu.Unlock()
-
-	s.publish(Event{Type: EventSet, Key: key, Value: stored})
+	s.publishLocked(Event{Type: EventSet, Key: key, Value: stored})
 	return existed
 }
 
 // Delete removes key. It reports whether the key existed.
 func (s *Store) Delete(key string) (existed bool) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	_, existed = s.data[key]
 	delete(s.data, key)
-	s.mu.Unlock()
 	if existed {
-		s.publish(Event{Type: EventDelete, Key: key})
+		s.publishLocked(Event{Type: EventDelete, Key: key})
 	}
 	return existed
 }
@@ -162,8 +161,10 @@ func (s *Store) Watch(prefix string, buffer int) (<-chan Event, func()) {
 	return w.ch, cancel
 }
 
-func (s *Store) publish(ev Event) {
-	s.mu.RLock()
+// publishLocked delivers ev to the matching watchers. The caller holds s.mu
+// for writing and has just applied the change, so watchers see events in the
+// order the changes were applied.
+func (s *Store) publishLocked(ev Event) {
 	for _, w := range s.watchers {
 		if w.prefix != "" && !strings.HasPrefix(ev.Key, w.prefix) {
 			continue
@@ -174,7 +175,6 @@ func (s *Store) publish(ev Event) {
 			// Slow consumer: drop the event rather than block the writer.
 		}
 	}
-	s.mu.RUnlock()
 }
 
 func (s *Store) sweepLoop(interval time.Duration) {
@@ -192,17 +192,13 @@ func (s *Store) sweepLoop(interval time.Duration) {
 
 func (s *Store) sweep() {
 	now := s.now()
-	var expired []string
 	s.mu.Lock()
+	defer s.mu.Unlock()
 	for k, e := range s.data {
 		if e.expired(now) {
-			expired = append(expired, k)
 			delete(s.data, k)
+			s.publishLocked(Event{Type: EventExpire, Key: k})
 		}
-	}
-	s.mu.Unlock()
-	for _, k := range expired {
-		s.publish(Event{Type: EventExpire, Key: k})
 	}
 }
 

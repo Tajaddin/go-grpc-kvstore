@@ -2,7 +2,9 @@ package store
 
 import (
 	"fmt"
+	"runtime"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 )
@@ -127,6 +129,81 @@ func TestWatchDropsOnSlowConsumer(t *testing.T) {
 	case <-done:
 	case <-time.After(2 * time.Second):
 		t.Fatal("publish blocked on a slow consumer")
+	}
+}
+
+// Two concurrent Sets on one key: the last event a watcher sees must carry the
+// value the store ended up with.
+func TestWatchOrderMatchesConcurrentSets(t *testing.T) {
+	s := New(0)
+	defer s.Close()
+	ch, cancel := s.Watch("", 4)
+	defer cancel()
+
+	for round := 0; round < 100000; round++ {
+		var wg sync.WaitGroup
+		for g := 0; g < 2; g++ {
+			wg.Add(1)
+			go func(g int) {
+				defer wg.Done()
+				s.Set("k", []byte(fmt.Sprintf("%d-%d", round, g)), 0)
+			}(g)
+		}
+		wg.Wait()
+		<-ch
+		last := <-ch
+		if v, _ := s.Get("k"); string(v) != string(last.Value) {
+			t.Fatalf("round %d: store holds %q but the last event was Set %q", round, v, last.Value)
+		}
+	}
+}
+
+// The sweeper must not report a key as expired after a newer, non-expiring
+// value has been written and announced.
+func TestWatchExpireNeverFollowsLaterSet(t *testing.T) {
+	s := New(0)
+	defer s.Close()
+	var tick atomic.Int64 // every clock read is 1ns later, so a 1ns TTL has passed by the next read
+	s.setClock(func() time.Time { return time.Unix(0, tick.Add(1)) })
+	const n = 20000
+	ch, cancel := s.Watch("", 3*n)
+	defer cancel()
+
+	stop := make(chan struct{})
+	swept := make(chan struct{})
+	go func() {
+		defer close(swept)
+		for {
+			select {
+			case <-stop:
+				return
+			default:
+				s.sweep()
+			}
+		}
+	}()
+	for i := 0; i < n; i++ {
+		s.Set("k", []byte("ttl"), time.Nanosecond)
+		runtime.Gosched() // let the sweeper catch the short-lived value
+		s.Set("k", []byte("permanent"), 0)
+	}
+	close(stop)
+	<-swept
+	cancel()
+
+	var prev Event
+	expires := 0
+	for ev := range ch {
+		if ev.Type == EventExpire {
+			expires++
+			if prev.Type == EventSet && string(prev.Value) == "permanent" {
+				t.Fatal("Expire delivered after Set of a value without a TTL")
+			}
+		}
+		prev = ev
+	}
+	if expires == 0 {
+		t.Fatal("the sweeper expired nothing, so the race was not exercised")
 	}
 }
 
