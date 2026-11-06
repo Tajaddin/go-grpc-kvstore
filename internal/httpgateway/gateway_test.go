@@ -3,11 +3,13 @@ package httpgateway
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"testing/iotest"
 
 	"github.com/Tajaddin/go-grpc-kvstore/internal/store"
 )
@@ -73,6 +75,53 @@ func TestHTTPListPrefix(t *testing.T) {
 	json.Unmarshal(body, &got)
 	if len(got.Keys) != 2 {
 		t.Fatalf("keys = %v, want 2", got.Keys)
+	}
+}
+
+// failingBody yields some bytes and then a read error, like a client that
+// disconnects halfway through its upload.
+type failingBody struct{ sent bool }
+
+func (b *failingBody) Read(p []byte) (int, error) {
+	if b.sent {
+		return 0, errors.New("connection reset by peer")
+	}
+	b.sent = true
+	return copy(p, "partial"), nil
+}
+
+func (b *failingBody) Close() error { return nil }
+
+func TestHTTPSetRejectsTruncatedBody(t *testing.T) {
+	st := store.New(0)
+	defer st.Close()
+	req := httptest.NewRequest(http.MethodPut, "/kv/k", nil)
+	req.Body = &failingBody{}
+	rec := httptest.NewRecorder()
+	New(st).Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400", rec.Code)
+	}
+	if v, found := st.Get("k"); found {
+		t.Fatalf("a truncated upload was stored: %q", v)
+	}
+}
+
+func TestHTTPSetRejectsOversizedValue(t *testing.T) {
+	st := store.New(0)
+	defer st.Close()
+	// net/http can return a body's last bytes together with io.EOF.
+	body := iotest.DataErrReader(strings.NewReader(strings.Repeat("x", 1<<20+1)))
+	req := httptest.NewRequest(http.MethodPut, "/kv/big", body)
+	rec := httptest.NewRecorder()
+	New(st).Handler().ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want 413", rec.Code)
+	}
+	if _, found := st.Get("big"); found {
+		t.Fatal("an oversized value was stored")
 	}
 }
 
