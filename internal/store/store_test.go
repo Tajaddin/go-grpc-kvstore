@@ -207,6 +207,46 @@ func TestWatchExpireNeverFollowsLaterSet(t *testing.T) {
 	}
 }
 
+func TestKeysSpreadAcrossShards(t *testing.T) {
+	s := New(0)
+	defer s.Close()
+	for i := 0; i < 10000; i++ {
+		s.Set(fmt.Sprintf("key:%d", i), []byte("v"), 0)
+	}
+	for i := range s.shards {
+		if n := len(s.shards[i].data); n == 0 {
+			t.Fatalf("shard %d holds no keys out of 10000", i)
+		}
+	}
+}
+
+// A writer holding one shard must not block reads and writes of keys that
+// live in other shards.
+func TestShardLocksAreIndependent(t *testing.T) {
+	s := New(0)
+	defer s.Close()
+	busy := s.shardFor("busy")
+	other := "other"
+	for i := 0; s.shardFor(other) == busy; i++ {
+		other = fmt.Sprintf("other%d", i)
+	}
+
+	busy.mu.Lock()
+	defer busy.mu.Unlock()
+	done := make(chan struct{})
+	go func() {
+		s.Set(other, []byte("v"), 0)
+		s.Get(other)
+		s.Delete(other)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("operations on another shard waited for a locked shard")
+	}
+}
+
 func TestConcurrentAccess(t *testing.T) {
 	s := New(0)
 	defer s.Close()

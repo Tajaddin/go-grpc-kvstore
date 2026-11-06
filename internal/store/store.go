@@ -3,6 +3,7 @@
 package store
 
 import (
+	"hash/maphash"
 	"sort"
 	"strings"
 	"sync"
@@ -40,26 +41,41 @@ type watcher struct {
 	ch     chan Event
 }
 
-// Store is a concurrent in-memory KV store.
+// shardCount is the number of independently locked partitions of the key
+// space. Keys in different shards never contend for the same lock.
+const shardCount = 32
+
+type shard struct {
+	mu   sync.RWMutex
+	data map[string]entry
+}
+
+// Store is a concurrent in-memory KV store. Keys are hashed to one of
+// shardCount shards, each guarded by its own RWMutex.
 type Store struct {
-	mu       sync.RWMutex
-	data     map[string]entry
+	shards [shardCount]shard
+	seed   maphash.Seed
+
+	watchMu  sync.RWMutex // guards watchers and nextID
 	watchers map[int]*watcher
 	nextID   int
 
-	now    func() time.Time // injectable clock for tests
-	stopCh chan struct{}
-	stopped bool
+	now       func() time.Time // injectable clock for tests
+	stopCh    chan struct{}
+	closeOnce sync.Once
 }
 
 // New creates a Store and starts a background sweeper that evicts expired keys
 // every sweepInterval. Call Close to stop the sweeper.
 func New(sweepInterval time.Duration) *Store {
 	s := &Store{
-		data:     make(map[string]entry),
+		seed:     maphash.MakeSeed(),
 		watchers: make(map[int]*watcher),
 		now:      time.Now,
 		stopCh:   make(chan struct{}),
+	}
+	for i := range s.shards {
+		s.shards[i].data = make(map[string]entry)
 	}
 	if sweepInterval > 0 {
 		go s.sweepLoop(sweepInterval)
@@ -67,11 +83,16 @@ func New(sweepInterval time.Duration) *Store {
 	return s
 }
 
+func (s *Store) shardFor(key string) *shard {
+	return &s.shards[maphash.String(s.seed, key)%shardCount]
+}
+
 // Get returns the value for key. found is false if the key is absent or expired.
 func (s *Store) Get(key string) (value []byte, found bool) {
-	s.mu.RLock()
-	e, ok := s.data[key]
-	s.mu.RUnlock()
+	sh := s.shardFor(key)
+	sh.mu.RLock()
+	e, ok := sh.data[key]
+	sh.mu.RUnlock()
 	if !ok || e.expired(s.now()) {
 		return nil, false
 	}
@@ -91,41 +112,48 @@ func (s *Store) Set(key string, value []byte, ttl time.Duration) (replaced bool)
 		expiresAt = s.now().Add(ttl)
 	}
 
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, existed := s.data[key]
-	s.data[key] = entry{value: stored, expiresAt: expiresAt}
-	s.publishLocked(Event{Type: EventSet, Key: key, Value: stored})
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	_, existed := sh.data[key]
+	sh.data[key] = entry{value: stored, expiresAt: expiresAt}
+	s.publish(Event{Type: EventSet, Key: key, Value: stored})
 	return existed
 }
 
 // Delete removes key. It reports whether the key existed.
 func (s *Store) Delete(key string) (existed bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	_, existed = s.data[key]
-	delete(s.data, key)
+	sh := s.shardFor(key)
+	sh.mu.Lock()
+	defer sh.mu.Unlock()
+	_, existed = sh.data[key]
+	delete(sh.data, key)
 	if existed {
-		s.publishLocked(Event{Type: EventDelete, Key: key})
+		s.publish(Event{Type: EventDelete, Key: key})
 	}
 	return existed
 }
 
 // List returns the keys with the given prefix, sorted. Expired keys are
-// skipped but not eagerly evicted (the sweeper handles eviction).
+// skipped but not eagerly evicted (the sweeper handles eviction). Shards are
+// read one at a time, so writes that run concurrently with List may or may
+// not be reflected in its result.
 func (s *Store) List(prefix string) []string {
 	now := s.now()
-	s.mu.RLock()
-	keys := make([]string, 0, len(s.data))
-	for k, e := range s.data {
-		if e.expired(now) {
-			continue
+	var keys []string
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.RLock()
+		for k, e := range sh.data {
+			if e.expired(now) {
+				continue
+			}
+			if prefix == "" || strings.HasPrefix(k, prefix) {
+				keys = append(keys, k)
+			}
 		}
-		if prefix == "" || strings.HasPrefix(k, prefix) {
-			keys = append(keys, k)
-		}
+		sh.mu.RUnlock()
 	}
-	s.mu.RUnlock()
 	sort.Strings(keys)
 	return keys
 }
@@ -144,27 +172,29 @@ func (s *Store) Watch(prefix string, buffer int) (<-chan Event, func()) {
 		buffer = 16
 	}
 	w := &watcher{prefix: prefix, ch: make(chan Event, buffer)}
-	s.mu.Lock()
+	s.watchMu.Lock()
 	id := s.nextID
 	s.nextID++
 	s.watchers[id] = w
-	s.mu.Unlock()
+	s.watchMu.Unlock()
 
 	cancel := func() {
-		s.mu.Lock()
+		s.watchMu.Lock()
 		if _, ok := s.watchers[id]; ok {
 			delete(s.watchers, id)
 			close(w.ch)
 		}
-		s.mu.Unlock()
+		s.watchMu.Unlock()
 	}
 	return w.ch, cancel
 }
 
-// publishLocked delivers ev to the matching watchers. The caller holds s.mu
-// for writing and has just applied the change, so watchers see events in the
-// order the changes were applied.
-func (s *Store) publishLocked(ev Event) {
+// publish delivers ev to the matching watchers. The caller holds the write
+// lock of ev.Key's shard and has just applied the change, so watchers see the
+// events for any one key in the order the changes were applied.
+func (s *Store) publish(ev Event) {
+	s.watchMu.RLock()
+	defer s.watchMu.RUnlock()
 	for _, w := range s.watchers {
 		if w.prefix != "" && !strings.HasPrefix(ev.Key, w.prefix) {
 			continue
@@ -190,31 +220,29 @@ func (s *Store) sweepLoop(interval time.Duration) {
 	}
 }
 
+// sweep evicts expired keys one shard at a time, so it only ever blocks
+// writers to the shard it is currently sweeping.
 func (s *Store) sweep() {
 	now := s.now()
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	for k, e := range s.data {
-		if e.expired(now) {
-			delete(s.data, k)
-			s.publishLocked(Event{Type: EventExpire, Key: k})
+	for i := range s.shards {
+		sh := &s.shards[i]
+		sh.mu.Lock()
+		for k, e := range sh.data {
+			if e.expired(now) {
+				delete(sh.data, k)
+				s.publish(Event{Type: EventExpire, Key: k})
+			}
 		}
+		sh.mu.Unlock()
 	}
 }
 
 // Close stops the background sweeper. Safe to call once.
 func (s *Store) Close() {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if !s.stopped {
-		s.stopped = true
-		close(s.stopCh)
-	}
+	s.closeOnce.Do(func() { close(s.stopCh) })
 }
 
-// setClock swaps the clock; used by tests.
+// setClock swaps the clock; used by tests before the store is in use.
 func (s *Store) setClock(now func() time.Time) {
-	s.mu.Lock()
 	s.now = now
-	s.mu.Unlock()
 }

@@ -34,7 +34,7 @@ One store, two front doors:
 
 | Feature | How |
 |---|---|
-| Concurrency | `sync.RWMutex`-guarded map; reads take the read lock, writes the write lock. Race-detector-clean under 16-goroutine contention tests. |
+| Concurrency | 32 shards, each a map behind its own `sync.RWMutex`; keys are placed by `hash/maphash`, so operations on different shards never wait on each other, and the TTL sweeper locks one shard at a time. Race-detector-clean under 16-goroutine contention tests. |
 | TTL expiry | Per-key `expiresAt`; lazy check on read plus a background sweeper that evicts and emits `EXPIRE` events. |
 | Watch | Prefix-scoped pub/sub. Buffered per-watcher channels; a slow consumer drops events instead of blocking writers. |
 | Streaming | gRPC server stream wired to the watch channel, terminated cleanly on client cancel. |
