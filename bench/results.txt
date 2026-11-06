@@ -1,42 +1,5 @@
 # go-grpc-kvstore hero-number benchmark
 
-## 2026-11-06 re-run (sharded store, ordered watch events, grpc 1.83.2)
-hardware:  Intel i5-13600KF 14c/20t; 32 GB RAM; Windows 11
-runtime:   Go 1.27.3
-server:    ./server -grpc :50051 -http :8080   (go build ./cmd/server)
-load:      ./load -addr localhost:50051 -workers 64 -requests 200000
-method:    7 rounds; each round started a fresh server of the previous code
-           (be98aa1) and ran the load once, then did the same for the
-           current code.
-
-NOT an idle-machine measurement. Other jobs kept total CPU at roughly
-45-100% (sampled before and after the runs), and throughput moved nearly
-7x between runs of the same binary, so these numbers measure contention,
-not the service. The spread swamps any difference between the two
-versions, and they are not comparable with the May 2026 baseline below.
-A second attempt that only started a run once background CPU averaged
-under 30% for 3 s found no such window in 5 minutes.
-
-current code (requests_ok, throughput, p50, p99)
-run 1: 200000/200000    8058 ops/sec  p50 4.9752ms  p99 50.9935ms
-run 2: 200000/200000    5745 ops/sec  p50 7.7032ms  p99 65.0068ms
-run 3: 200000/200000   28817 ops/sec  p50 1.0326ms  p99 23.5552ms
-run 4: 200000/200000    5647 ops/sec  p50 7.4508ms  p99 72.219ms
-run 5: 200000/200000    8335 ops/sec  p50 4.9112ms  p99 45.9576ms
-run 6: 200000/200000   35345 ops/sec  p50 1.1355ms  p99 11.4266ms
-run 7: 200000/200000   38215 ops/sec  p50 578µs    p99 13.3178ms
-median throughput: 8,335 ops/sec   range 5,647 - 38,215
-
-previous code, same rounds
-run 1: 200000/200000    8939 ops/sec  p50 3.7943ms  p99 50.4608ms
-run 2: 200000/200000    5096 ops/sec  p50 8.7298ms  p99 79.0734ms
-run 3: 200000/200000    7469 ops/sec  p50 6.0745ms  p99 45.7747ms
-run 4: 200000/200000   11808 ops/sec  p50 2.7487ms  p99 42.7837ms
-run 5: 200000/200000   15690 ops/sec  p50 2.513ms   p99 23.5608ms
-run 6: 200000/200000   11480 ops/sec  p50 3.5281ms  p99 33.5363ms
-run 7: 200000/200000   29753 ops/sec  p50 1.1121ms  p99 15.2261ms
-median throughput: 11,480 ops/sec  range 5,096 - 29,753
-
 ## 2026-05-23 baseline (previous code: single-lock store, grpc 1.81.1)
 timestamp:  2026-05-23T01:30-04:00
 hardware:   Intel i7-10875H 8c/16t @ 2.3GHz; 32 GB RAM; Windows 11
@@ -44,6 +7,7 @@ runtime:    Go 1.26.3 (gRPC HTTP/2 + protobuf, in-memory store)
 server:     go run ./cmd/server -grpc :50051
 load:       ./load -addr localhost:50051 -workers 64 -requests 200000
 runs:       3 consecutive (Get hot path)
+conditions: machine load not recorded
 
 ## Summary
 median throughput: 51,753 ops/sec  (run 1)

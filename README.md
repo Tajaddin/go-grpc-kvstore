@@ -1,6 +1,6 @@
 # go-grpc-kvstore
 
-> In-memory key-value store served over **gRPC + REST at once**. On the Get path over real gRPC (HTTP/2 + protobuf, 64 workers, 200k/200k OK) the earlier single-lock version measured **~51,800 ops/sec at p99 2.84ms** on an idle machine; the current sharded version has not been re-measured under the same conditions yet. TTL expiry, a streaming Watch, sharded concurrency, distroless image. 24 tests with the race detector, no external infra.
+> In-memory key-value store served over **gRPC + REST at once**. On the Get path over real gRPC (HTTP/2 + protobuf, 64 workers, 200k/200k OK) the earlier single-lock version measured **~51,800 ops/sec at p99 2.84ms** (May 2026; details under [Hero metrics](#hero-metrics)). TTL expiry, a streaming Watch, sharded concurrency, distroless image. 24 tests with the race detector, no external infra.
 
 [![ci](https://github.com/Tajaddin/go-grpc-kvstore/actions/workflows/ci.yml/badge.svg)](https://github.com/Tajaddin/go-grpc-kvstore/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -8,14 +8,14 @@
 
 ## Hero metrics
 
-Reproducible:
+The hero benchmark:
 
 ```bash
 go run ./cmd/server &
 go run ./load -addr localhost:50051 -workers 64 -requests 200000
 ```
 
-Last idle-machine baseline: 3 runs of the earlier version (single-lock store, grpc 1.81.1) on an i7-10875H, May 2026. Full output and hardware in [`bench/results.txt`](bench/results.txt).
+Measured in May 2026 on the earlier version (single-lock store, grpc 1.81.1): 3 runs on an i7-10875H; machine load was not recorded. The current version (sharded store, grpc 1.83.2) has not been measured under comparable conditions. Full output and hardware in [`bench/results.txt`](bench/results.txt).
 
 | Metric | Value |
 |---|---:|
@@ -24,8 +24,6 @@ Last idle-machine baseline: 3 runs of the earlier version (single-lock store, gr
 | Success rate | 200,000 / 200,000 (100%) per run |
 
 Single server instance, single client process, in-memory store, real gRPC over the loopback (HTTP/2 framing + protobuf marshal on every call).
-
-A re-run of the current version on 2026-11-06 (i5-13600KF) was taken on a machine shared with other jobs at 45-100% CPU; throughput swung nearly 7x between runs of the same binary, so those numbers measure the contention, not the service. They are recorded in `bench/results.txt` and not quoted here.
 
 ## What it is
 
@@ -56,7 +54,7 @@ Prerequisites: Go 1.26+ (Docker optional for the container build).
 ```bash
 go test ./...                       # 24 tests (CI runs them with -race)
 go run ./cmd/server                 # gRPC on :50051, REST on :8080
-go run ./load -addr localhost:50051 -workers 64 -requests 200000   # reproduces the hero
+go run ./load -addr localhost:50051 -workers 64 -requests 200000   # runs the hero benchmark
 docker compose up --build           # alt: distroless container
 ```
 
