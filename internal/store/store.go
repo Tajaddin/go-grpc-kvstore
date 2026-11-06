@@ -42,7 +42,8 @@ type watcher struct {
 }
 
 // shardCount is the number of independently locked partitions of the key
-// space. Keys in different shards never contend for the same lock.
+// space. Writes to different shards take different shard locks, though all
+// of them read-lock watchMu to publish their events.
 const shardCount = 32
 
 type shard struct {
@@ -220,8 +221,8 @@ func (s *Store) sweepLoop(interval time.Duration) {
 	}
 }
 
-// sweep evicts expired keys one shard at a time, so it only ever blocks
-// writers to the shard it is currently sweeping.
+// sweep evicts expired keys one shard at a time, so it blocks only
+// operations on the shard it is currently sweeping.
 func (s *Store) sweep() {
 	now := s.now()
 	for i := range s.shards {
