@@ -67,7 +67,24 @@ func main() {
 	if err := httpSrv.Shutdown(ctx); err != nil {
 		log.Printf("http shutdown: %v", err)
 	}
-	grpcSrv.GracefulStop()
+	stopGRPC(ctx, grpcSrv)
+}
+
+// stopGRPC lets in-flight RPCs finish until ctx is done, then closes whatever
+// is left. GracefulStop alone would wait forever on Watch streams, which only
+// end when the client cancels them.
+func stopGRPC(ctx context.Context, srv *grpc.Server) {
+	stopped := make(chan struct{})
+	go func() {
+		srv.GracefulStop()
+		close(stopped)
+	}()
+	select {
+	case <-stopped:
+	case <-ctx.Done():
+		log.Println("grpc graceful stop timed out; closing open streams")
+		srv.Stop()
+	}
 }
 
 func envOr(key, fallback string) string {
