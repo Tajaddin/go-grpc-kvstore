@@ -1,5 +1,60 @@
 # go-grpc-kvstore hero-number benchmark
 
+## 2026-11-07 current code (sharded store, grpc 1.83.2), commit fd7215f
+timestamp:  2026-11-07T16:40-05:00
+commit:     fd7215f4284f3955cf8a1ea2bbdc81117e3ac541 (main)
+hardware:   13th Gen Intel Core i5-13600KF 14c/20t; 32 GB RAM; Windows 11 Pro 10.0.26300
+runtime:    Go 1.27.3 (gRPC HTTP/2 + protobuf, in-memory store); grpc v1.83.2
+server:     go run ./cmd/server   (defaults: gRPC :50051, HTTP :8080)
+load:       go run ./load -addr localhost:50051 -workers 64 -requests 200000
+runs:       3 consecutive (Get hot path), 16:40:18-16:40:32
+conditions: CPU load 22% (Win32_Processor LoadPercentage) at 16:40:18, immediately before run 1.
+            Five one-second samples at 16:37 read 37.5, 40.5, 41.3, 33 and 43.5% (Overwolf, Wallpaper
+            Engine, Docker Desktop idle, Defender, and this session's own go builds), so the runs waited
+            until the load fell to 22%; five samples taken during the runs read 26.7, 17.5, 21.4, 20.7
+            and 19.1%. 12.4 GB of 31.8 GB RAM free; docker ps: no containers running; GPU 20%,
+            1725 MiB used (nvidia-smi); Dota 2 not running.
+
+## Summary
+median throughput: 118,222 ops/sec  (run 2)
+median p99:        1.19 ms           (run 2)
+max throughput:    123,608 ops/sec  (run 1)
+Not comparable with the May 2026 entry below: different code (sharded vs single-lock store)
+on a different machine (desktop i5-13600KF vs laptop i7-10875H).
+
+## Raw runs
+
+=== run 1 ===
+endpoint:      Get over gRPC (HTTP/2, protobuf)
+workers:       64
+requests_ok:   200000 / 200000
+wall_seconds:  1.618
+throughput:    123608 ops/sec
+latency_p50:   522.4µs
+latency_p95:   1.051ms
+latency_p99:   1.136ms
+latency_max:   1.9596ms
+=== run 2 ===
+endpoint:      Get over gRPC (HTTP/2, protobuf)
+workers:       64
+requests_ok:   200000 / 200000
+wall_seconds:  1.692
+throughput:    118222 ops/sec
+latency_p50:   522.1µs
+latency_p95:   1.0567ms
+latency_p99:   1.1945ms
+latency_max:   2.6373ms
+=== run 3 ===
+endpoint:      Get over gRPC (HTTP/2, protobuf)
+workers:       64
+requests_ok:   200000 / 200000
+wall_seconds:  1.773
+throughput:    112797 ops/sec
+latency_p50:   524.6µs
+latency_p95:   1.0754ms
+latency_p99:   1.541ms
+latency_max:   2.8418ms
+
 ## 2026-05-23 baseline (previous code: single-lock store, grpc 1.81.1)
 timestamp:  2026-05-23T01:30-04:00
 hardware:   Intel i7-10875H 8c/16t @ 2.3GHz; 32 GB RAM; Windows 11
