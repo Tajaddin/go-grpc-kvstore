@@ -1,6 +1,6 @@
 # go-grpc-kvstore
 
-> In-memory key-value store served over **gRPC + REST at once**. On the Get path over real gRPC (HTTP/2 + protobuf, 64 workers, 200k/200k OK) the earlier single-lock version measured **~51,800 ops/sec at p99 2.84ms** (May 2026; details under [Hero metrics](#hero-metrics)). TTL expiry, a streaming Watch, sharded concurrency, distroless image. 24 tests with the race detector, no external infra.
+> In-memory key-value store served over **gRPC + REST at once**. On the Get path over real gRPC (HTTP/2 + protobuf, 64 workers, 200k/200k OK) the current sharded store measured **~118,000 ops/sec at p99 1.19ms** (2026-11-07, 3-run median; details under [Hero metrics](#hero-metrics)). TTL expiry, a streaming Watch, sharded concurrency, distroless image. 24 tests with the race detector, no external infra.
 
 [![ci](https://github.com/Tajaddin/go-grpc-kvstore/actions/workflows/ci.yml/badge.svg)](https://github.com/Tajaddin/go-grpc-kvstore/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
@@ -15,12 +15,12 @@ go run ./cmd/server &
 go run ./load -addr localhost:50051 -workers 64 -requests 200000
 ```
 
-Measured in May 2026 on the earlier version (single-lock store, grpc 1.81.1): 3 runs on an i7-10875H; machine load was not recorded. The current version (sharded store, grpc 1.83.2) has not been measured under comparable conditions. Full output and hardware in [`bench/results.txt`](bench/results.txt).
+Measured 2026-11-07 on the current code (sharded store, grpc 1.83.2, commit fd7215f): 3 consecutive runs on an i5-13600KF desktop (Windows 11, Go 1.27.3), CPU load 22% immediately before the first run. The May 2026 figure of ~51,800 ops/sec at p99 2.84 ms was the earlier single-lock version (grpc 1.81.1) on a different machine (i7-10875H laptop), so the two are not a like-for-like comparison. Full output, hardware and machine state in [`bench/results.txt`](bench/results.txt).
 
 | Metric | Value |
 |---|---:|
-| **Throughput (gRPC Get)** | **~51,800 ops/sec** (3-run median 51,753; max 51,993) |
-| Latency p99 | **~2.84 ms** |
+| **Throughput (gRPC Get)** | **~118,000 ops/sec** (3-run median 118,222; max 123,608) |
+| Latency p99 | **~1.19 ms** (3-run median) |
 | Success rate | 200,000 / 200,000 (100%) per run |
 
 Single server instance, single client process, in-memory store, real gRPC over the loopback (HTTP/2 framing + protobuf marshal on every call).
