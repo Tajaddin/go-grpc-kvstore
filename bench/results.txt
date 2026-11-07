@@ -1,10 +1,13 @@
 # go-grpc-kvstore hero-number benchmark
+
+## 2026-05-23 baseline (previous code: single-lock store, grpc 1.81.1)
 timestamp:  2026-05-23T01:30-04:00
 hardware:   Intel i7-10875H 8c/16t @ 2.3GHz; 32 GB RAM; Windows 11
 runtime:    Go 1.26.3 (gRPC HTTP/2 + protobuf, in-memory store)
 server:     go run ./cmd/server -grpc :50051
 load:       ./load -addr localhost:50051 -workers 64 -requests 200000
 runs:       3 consecutive (Get hot path)
+conditions: machine load not recorded
 
 ## Summary
 median throughput: 51,753 ops/sec  (run 1)

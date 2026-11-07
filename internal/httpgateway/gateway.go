@@ -5,6 +5,8 @@ package httpgateway
 import (
 	"encoding/base64"
 	"encoding/json"
+	"errors"
+	"io"
 	"log"
 	"net/http"
 	"strconv"
@@ -12,6 +14,8 @@ import (
 
 	"github.com/Tajaddin/go-grpc-kvstore/internal/store"
 )
+
+const maxValueBytes = 1 << 20
 
 type Gateway struct {
 	store *store.Store
@@ -63,19 +67,15 @@ func (g *Gateway) set(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "key is required"})
 		return
 	}
-	defer r.Body.Close()
-	buf := make([]byte, 0, 1024)
-	tmp := make([]byte, 4096)
-	for {
-		n, err := r.Body.Read(tmp)
-		buf = append(buf, tmp[:n]...)
-		if err != nil {
-			break
-		}
-		if len(buf) > 1<<20 { // 1 MiB cap
+	buf, err := io.ReadAll(http.MaxBytesReader(w, r.Body, maxValueBytes))
+	if err != nil {
+		var tooLarge *http.MaxBytesError
+		if errors.As(err, &tooLarge) {
 			writeJSON(w, http.StatusRequestEntityTooLarge, map[string]string{"error": "value too large"})
 			return
 		}
+		writeJSON(w, http.StatusBadRequest, map[string]string{"error": "could not read request body"})
+		return
 	}
 
 	var ttl time.Duration

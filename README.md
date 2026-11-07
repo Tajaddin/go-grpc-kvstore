@@ -1,21 +1,21 @@
 # go-grpc-kvstore
 
-> In-memory key-value store served over **gRPC + REST at once**. **~51,800 ops/sec at p99 2.84ms** on the Get path over real gRPC (HTTP/2 + protobuf, 64 workers, 200k/200k OK). TTL expiry, a streaming Watch, sharded concurrency, distroless image. 16 tests with the race detector, no external infra.
+> In-memory key-value store served over **gRPC + REST at once**. On the Get path over real gRPC (HTTP/2 + protobuf, 64 workers, 200k/200k OK) the earlier single-lock version measured **~51,800 ops/sec at p99 2.84ms** (May 2026; details under [Hero metrics](#hero-metrics)). TTL expiry, a streaming Watch, sharded concurrency, distroless image. 24 tests with the race detector, no external infra.
 
 [![ci](https://github.com/Tajaddin/go-grpc-kvstore/actions/workflows/ci.yml/badge.svg)](https://github.com/Tajaddin/go-grpc-kvstore/actions/workflows/ci.yml)
 [![License](https://img.shields.io/badge/license-MIT-blue)](LICENSE)
-[![Go](https://img.shields.io/badge/go-1.24-00ADD8)](go.mod)
+[![Go](https://img.shields.io/badge/go-1.26-00ADD8)](go.mod)
 
 ## Hero metrics
 
-Reproducible:
+The hero benchmark:
 
 ```bash
 go run ./cmd/server &
 go run ./load -addr localhost:50051 -workers 64 -requests 200000
 ```
 
-Last measured 3-run baseline (full output + hardware in [`bench/results.txt`](bench/results.txt)):
+Measured in May 2026 on the earlier version (single-lock store, grpc 1.81.1): 3 runs on an i7-10875H; machine load was not recorded. The current version (sharded store, grpc 1.83.2) has not been measured under comparable conditions. Full output and hardware in [`bench/results.txt`](bench/results.txt).
 
 | Metric | Value |
 |---|---:|
@@ -23,7 +23,7 @@ Last measured 3-run baseline (full output + hardware in [`bench/results.txt`](be
 | Latency p99 | **~2.84 ms** |
 | Success rate | 200,000 / 200,000 (100%) per run |
 
-Single server instance, single client process, in-memory store, real gRPC over the loopback (HTTP/2 framing + protobuf marshal on every call). That is ~5x the "10K QPS" bar most platform-engineering JDs ask for, with a sub-3ms p99.
+Single server instance, single client process, in-memory store, real gRPC over the loopback (HTTP/2 framing + protobuf marshal on every call).
 
 ## What it is
 
@@ -34,27 +34,27 @@ One store, two front doors:
 
 | Feature | How |
 |---|---|
-| Concurrency | `sync.RWMutex`-guarded map; reads take the read lock, writes the write lock. Race-detector-clean under 16-goroutine contention tests. |
+| Concurrency | 32 shards, each a map behind its own `sync.RWMutex`; keys are placed by `hash/maphash`, so `Get`, `Set` and `Delete` lock only their key's shard (writes also read-lock the watcher list to publish events), and the TTL sweeper locks one shard at a time. Race-detector-clean under 16-goroutine contention tests. |
 | TTL expiry | Per-key `expiresAt`; lazy check on read plus a background sweeper that evicts and emits `EXPIRE` events. |
-| Watch | Prefix-scoped pub/sub. Buffered per-watcher channels; a slow consumer drops events instead of blocking writers. |
-| Streaming | gRPC server stream wired to the watch channel, terminated cleanly on client cancel. |
-| Safety | Stored values are copied in and out, so callers cannot mutate store state through their slices. |
+| Watch | Prefix-scoped pub/sub. Events are sent while the key's shard is still locked, so each key's `SET` / `DELETE` / `EXPIRE` events arrive in the order they were applied. Buffered per-watcher channels; a slow consumer drops events instead of blocking writers. |
+| Streaming | gRPC server stream wired to the watch channel, terminated cleanly on client cancel. On shutdown the server waits up to 5 s for RPCs to finish, then closes the streams still open. |
+| Safety | Stored values are copied in and out, so callers cannot mutate store state through their slices. REST uploads are capped at 1 MiB (`413`), and a body that fails mid-read is rejected (`400`), never stored truncated. |
 | Deploy | Multi-stage build to a `distroless/static` nonroot image. |
 
 ## Why this matters for hiring
 
 Role categories unlocked: **Backend-Go**, Platform Engineering, Systems, Forward Deployed (infra).
 
-Go + gRPC + load-tested throughput is the exact stack platform and infra teams screen for. This repo backs the "Go / gRPC" resume line with a service that actually serves 40K+ ops/sec and proves it with a reproducible harness.
+Go + gRPC + load-tested throughput is the exact stack platform and infra teams screen for. This repo backs the "Go / gRPC" resume line with a load-tested service and a reproducible harness.
 
 ## How to run
 
-Prerequisites: Go 1.23+ (Docker optional for the container build).
+Prerequisites: Go 1.26+ (Docker optional for the container build).
 
 ```bash
-go test ./...                       # 16 unit tests (race detector)
+go test ./...                       # 24 tests (CI runs them with -race)
 go run ./cmd/server                 # gRPC on :50051, REST on :8080
-go run ./load -addr localhost:50051 -workers 64 -requests 200000   # reproduces the hero
+go run ./load -addr localhost:50051 -workers 64 -requests 200000   # runs the hero benchmark
 docker compose up --build           # alt: distroless container
 ```
 
@@ -90,13 +90,14 @@ gRPC service `kv.v1.KvStore` (see [`proto/kv.proto`](proto/kv.proto)):
 ## Testing
 
 ```bash
-go test ./... -race        # 16 tests, race detector on
-make cover                 # coverage (store 78%, grpc 77%, http 77%)
+go test ./... -race        # 24 tests, race detector on
+make cover                 # coverage (store 90.0%, grpc 76.7%, http 80.5%)
 ```
 
-- **store**: set/get/delete, TTL expiry (injected clock), prefix list, value-copy isolation, watch delivery, slow-consumer drop, 16-goroutine concurrency.
+- **store**: set/get/delete, TTL expiry (injected clock), prefix list, value-copy isolation, watch delivery, slow-consumer drop, watch order under concurrent Sets and under the sweeper, keys spread over all shards, a locked shard not blocking others, 16-goroutine concurrency.
 - **grpcserver**: set/get/delete/list over an in-process `bufconn`, empty-key `InvalidArgument`, and a live `Watch` stream round trip.
-- **httpgateway**: PUT/GET/DELETE/list/healthz via `httptest`.
+- **httpgateway**: PUT/GET/DELETE/list/healthz via `httptest`, oversized (413) and truncated (400) uploads not stored.
+- **cmd/server**: shutdown closes open `Watch` streams after the grace period and stops at once when idle.
 
 ## Project layout
 
@@ -120,7 +121,7 @@ make proto    # needs protoc + protoc-gen-go + protoc-gen-go-grpc
 
 ## Stack
 
-Go 1.24, google.golang.org/grpc, protobuf, net/http (REST), distroless Docker, GitHub Actions (vet + race tests + coverage gate + image build).
+Go 1.26, google.golang.org/grpc, protobuf, net/http (REST), distroless Docker, GitHub Actions (vet + race tests + coverage gate + image build).
 
 ## License
 
